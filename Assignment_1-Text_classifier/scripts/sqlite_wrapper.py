@@ -1,5 +1,4 @@
 import sqlite3
-from nltk import word_tokenize
 from collections import defaultdict
 
 
@@ -123,8 +122,6 @@ class SqliteFiller:
             labels = [label.rstrip() for label in f.readlines()]
 
         return list(zip(labels, sents))
-
-
 
 
 if __name__ == '__main__':

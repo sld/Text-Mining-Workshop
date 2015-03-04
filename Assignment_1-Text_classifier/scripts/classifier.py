@@ -48,9 +48,19 @@ class BaseClassifier:
 
 
 class StreamClassifier(BaseClassifier):
-    def pipeline(self, max_i=400, batch_size=5000, test_iteration=10):
+    def pipeline(self, max_i=400, batch_size=5000, test_iteration=20):
+        classifier_prerformance = []
         self._init_classifier()
+        self._online_train_and_test(max_i, batch_size, test_iteration)
 
+    def _init_classifier(self):
+        self.vectorizer = HashingVectorizer(ngram_range=(1, 3),
+                                            non_negative=True,
+                                            stop_words=self._get_stop_words())
+        self.classifier = MultinomialNB()
+
+    def _online_train_and_test(self, max_i, batch_size, test_iteration):
+        classifier_prerformance = []
         for i in range(0, max_i):
             batch = self._get_batch(i, batch_size)
             sents, labels = self._split(batch)
@@ -59,15 +69,14 @@ class StreamClassifier(BaseClassifier):
             self.classifier.partial_fit(transformed_sents, labels, classes=self._labels)
 
             if i % test_iteration == 0:
-                self._test_classifier(i)
+                scores = self._test_classifier(i)
                 pickle.dump((self.classifier, self.vectorizer, i, max_i),
                             open('../states/stream_classifier_{0}.p'.format(i), 'wb'))
 
-    def _init_classifier(self):
-        self.vectorizer = HashingVectorizer(ngram_range=(1, 2),
-                                            non_negative=True,
-                                            stop_words=self._get_stop_words())
-        self.classifier = MultinomialNB()
+                classifier_prerformance.append((i, batch_size, scores))
+                pickle.dump(classifier_prerformance,
+                            open('../states/overall_stream_classifier_performance.p', 'wb'))
+                print((i, batch_size, scores))
 
     def _test_classifier(self, i):
         if self._test_data_filled is not True:
@@ -78,8 +87,7 @@ class StreamClassifier(BaseClassifier):
             self.test_data_filled = True
 
         predicted = self.classifier.predict(self.test_transformed_sents)
-        print([i, accuracy_score(self.test_labels, predicted),
-               f1_score(self.test_labels, predicted)])
+        return accuracy_score(self.test_labels, predicted), f1_score(self.test_labels, predicted)
 
 
 class InMemoryClassifier(BaseClassifier):
@@ -129,4 +137,4 @@ if __name__ == '__main__':
     # cl_in_memory.pipeline(100000)
 
     cl_stream = StreamClassifier()
-    cl_stream.pipeline(520, 1000)
+    cl_stream.pipeline(1035, 2500)
