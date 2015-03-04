@@ -1,56 +1,111 @@
-import nltk.corpus
 import pickle
 
 from sys import argv
 from collections import defaultdict
+
 from sqlite_wrapper import SqliteWrapper
-from nltk import word_tokenize
-from nltk import NaiveBayesClassifier
-from nltk.probability import FreqDist
-from nltk.classify import accuracy
-
 from sklearn.svm import LinearSVC
-from nltk.classify.scikitlearn import SklearnClassifier
-from sklearn.pipeline import Pipeline
 from sklearn.naive_bayes import MultinomialNB
-from sklearn.feature_selection import SelectKBest, chi2
+from sklearn.linear_model import SGDClassifier
+from sklearn.feature_extraction.text import HashingVectorizer
 from sklearn.feature_extraction.text import TfidfTransformer
-from sklearn.feature_extraction.text import CountVectorizer
-from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.pipeline import Pipeline
 from sklearn.metrics import accuracy_score
+from sklearn.metrics import f1_score
 
 
-class Classifier:
-
+class BaseClassifier:
     def __init__(self):
         self.sqlite_wrapper = SqliteWrapper()
         self._labels = ['Rest', 'Business', 'PrivateLife', 'Entertainment']
+        self._test_data_filled = False
 
-    def pipeline(self):
-        train, test = self._load_from_file('small')
+    def _split(self, data):
+        sents = [e[0] for e in data]
+        labels = [e[1] for e in data]
+        return sents, labels
+
+    def _features(self, sent):
+        return sent
+
+    def _get_batch(self, i, limit=1000, query=None, col_num=1):
+        if query is None:
+            query = "SELECT * FROM sents WHERE label=? ORDER BY sent LIMIT ? OFFSET ?"
+        data = {}
+        offset = limit*i
+        for label in self._labels:
+            self.sqlite_wrapper.execute(query, (label, limit, offset))
+            data[label] = list(self.sqlite_wrapper.executor)
+
+        classifier_data = []
+        for label, sents in data.items():
+            classifier_data += [(self._features(row[col_num]), label) for row in sents]
+        return classifier_data
+
+    def _get_stop_words(self):
+        self.sqlite_wrapper.execute("select * from stop_words")
+        return [e[0] for e in list(self.sqlite_wrapper.executor)]
+
+
+class StreamClassifier(BaseClassifier):
+    def pipeline(self, max_i=400, batch_size=5000, test_iteration=10):
+        self._init_classifier()
+
+        for i in range(0, max_i):
+            batch = self._get_batch(i, batch_size)
+            sents, labels = self._split(batch)
+            transformed_sents = self.vectorizer.transform(sents)
+
+            self.classifier.partial_fit(transformed_sents, labels, classes=self._labels)
+
+            if i % test_iteration == 0:
+                self._test_classifier(i)
+                pickle.dump((self.classifier, self.vectorizer, i, max_i),
+                            open('../states/stream_classifier_{0}.p'.format(i), 'wb'))
+
+    def _init_classifier(self):
+        self.vectorizer = HashingVectorizer(ngram_range=(1, 2),
+                                            non_negative=True,
+                                            stop_words=self._get_stop_words())
+        self.classifier = MultinomialNB()
+
+    def _test_classifier(self, i):
+        if self._test_data_filled is not True:
+            query = "SELECT * FROM test_sents WHERE label=? ORDER BY sent LIMIT ? OFFSET ?"
+            test_data = self._get_batch(0, 10000, query, 2)
+            test_sents, self.test_labels = self._split(test_data)
+            self.test_transformed_sents = self.vectorizer.transform(test_sents)
+            self.test_data_filled = True
+
+        predicted = self.classifier.predict(self.test_transformed_sents)
+        print([i, accuracy_score(self.test_labels, predicted),
+               f1_score(self.test_labels, predicted)])
+
+
+class InMemoryClassifier(BaseClassifier):
+    def pipeline(self, size=100000):
+        train = self._get_batch(0, size)
+        test = self._get_batch(1, size)
         self.train_classifier(train)
         print(self.test_classifier(test))
 
     def train_classifier(self, data):
         sents, labels = self._split(data)
-        pipeline_ = Pipeline([('counts', CountVectorizer(ngram_range=(1, 3))),
+        pipeline_ = Pipeline([('counts', HashingVectorizer(ngram_range=(1, 3),
+                                                           non_negative=True,
+                                                           stop_words=self._get_stop_words())),
                               ('tfidf', TfidfTransformer()),
-                              ('classifier', LinearSVC())])
+                              ('classifier',  LinearSVC())])
         pipeline_.fit(sents, labels)
         self.classifier_pipeline = pipeline_
 
     def test_classifier(self, data):
         sents, labels = self._split(data)
         predicted = self.classifier_pipeline.predict(sents)
-        return accuracy_score(labels, predicted)
+        return accuracy_score(labels, predicted), f1_score(labels, predicted)
 
     def _load_from_file(self, size):
         return pickle.load(open('../train_and_test_{0}.p'.format(size), 'rb'))
-
-    def _split(self, data):
-        sents = [e[0] for e in data]
-        labels = [e[1] for e in data]
-        return sents, labels
 
     def _train_and_test_sets(self, limit=300000):
         data = {}
@@ -66,13 +121,12 @@ class Classifier:
             classifier_data = [(self._features(sent), label) for _, sent in sents]
             train_data += classifier_data[:cnt80]
             test_data += classifier_data[cnt80:]
-        # pickle.dump((train_data, test_data), open('../train_and_test.p', 'wb'))
         return (train_data, test_data)
-
-    def _features(self, sent):
-        return sent
 
 
 if __name__ == '__main__':
-    cl = Classifier()
-    cl.pipeline()
+    # cl_in_memory = InMemoryClassifier()
+    # cl_in_memory.pipeline(100000)
+
+    cl_stream = StreamClassifier()
+    cl_stream.pipeline(520, 1000)
