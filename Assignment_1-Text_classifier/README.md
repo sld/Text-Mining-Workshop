@@ -14,4 +14,5 @@
 * Development-test - 10000 документов для каждого класса из тестовой выборки.
 * Точность на тестовой выборке 0.6812, F1-мера: 0.6802.
 
-![Кривая обучения на development-test выборке](https://www.dropbox.com/s/5fzw9r06b6d5w9k/learning-curve-mnb.png "Кривая обучения на development-test выборке")
+Кривая обучения на development-test выборке:
+![Кривая обучения на development-test выборке](https://www.dropbox.com/s/5fzw9r06b6d5w9k/learning-curve-mnb.png?raw=true "Кривая обучения на development-test выборке")
